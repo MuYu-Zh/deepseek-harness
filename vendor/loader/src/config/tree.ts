@@ -3,6 +3,23 @@ import { isNonNullable, type Dict } from '@deepseek-ai/cosmokit'
 import { Entry, type EntryOptions } from './entry.ts'
 import { EntryGroup } from './group.ts'
 
+/**
+ * Whether a module specifier is an absolute filesystem path (`/abs` on POSIX,
+ * `D:\abs`, `D:/abs`, `\abs`, or `\\server\share` on Windows). Node builtins
+ * are avoided here on purpose: this module is also bundled for the browser.
+ */
+function isAbsPath(name: string): boolean {
+  return name.startsWith('/') || name.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(name)
+}
+
+/** Convert an absolute filesystem path to a `file://` URL string. */
+function toFileUrl(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  if (normalized.startsWith('//')) return 'file:' + normalized
+  if (normalized.startsWith('/')) return 'file://' + normalized
+  return 'file:///' + normalized
+}
+
 /** Mutable tree of loader entries. Persistence is supplied by subclasses. */
 export abstract class EntryTree {
   static readonly sep = ':'
@@ -151,12 +168,16 @@ export abstract class EntryTree {
       // onImport.tracePromise.__proto__
       // internal.import
       info.offset += 3
+      // Absolute filesystem paths (`/abs` on POSIX, `D:\abs` or `D:/abs` on
+      // Windows) are not valid module specifiers — Node parses a drive letter
+      // as a URL scheme. Normalize them to `file://` URLs before importing.
+      const specifier = isAbsPath(name) ? toFileUrl(name) : name
       if (this.ctx.loader.internal) {
-        return await this.ctx.loader.internal.import(name, this.ctx.baseUrl!, {})
+        return await this.ctx.loader.internal.import(specifier, this.ctx.baseUrl!, {})
       } else if (name.startsWith('.')) {
         return await import(/* @vite-ignore */new URL(name, this.ctx.baseUrl).href)
       } else {
-        return await import(/* @vite-ignore */name)
+        return await import(/* @vite-ignore */specifier)
       }
     }, getOuterStack)
   }
